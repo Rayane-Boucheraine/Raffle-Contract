@@ -73,6 +73,18 @@ contract Raffle is VRFConsumerBaseV2Plus {
         emit RaffleEntered(msg.sender);
     }
 
+    /**
+     * @dev THis is the function that the CHianlink nodes will call to see
+     * @param - ignored 
+     * @return upKeepNeeded - true if it's time to pick a winner
+     * @return - ignored
+     */
+     function checkUpKeep(bytes calldata) public view returns (bool upKeepNeeded, bytes memory) {
+  if ((block.timestamp - s_lastTimeStamp) > i_interval) {
+            revert();
+        }
+    }
+
     function pickWinner() external {
         if ((block.timestamp - s_lastTimeStamp) > i_interval) {
             revert();
