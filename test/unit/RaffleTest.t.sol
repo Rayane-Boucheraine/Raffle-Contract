@@ -167,14 +167,104 @@ contract RaffleTest is Test {
         assert(raffleState == Raffle.RaffleState.CALCULATING);
     }
 
+    modifier skipFork() {
+        if (block.chainid != 31337) {
+            return;
+        }
+        _;
+    }
+
     function testFulfillRandomWordsCanOnlyBeCalledAfterPerformUpKeep(
         uint256 randomRequestId
-    ) public raffleEntered {
+    ) public raffleEntered skipFork {
         // Arrange / Act / Asset
         vm.expectRevert(VRFCoordinatorV2_5Mock.InvalidRequest.selector);
         VRFCoordinatorV2_5Mock(vrfCoordinator).fulfillRandomWords(
             randomRequestId,
             address(raffle)
         );
+    }
+
+    function testFulfillRandomWordsPicksAWinnerResteAndSendsMoney()
+        public
+        raffleEntered
+        skipFork
+    {
+        // Arrange
+        uint256 additionalEntrances = 3; // Smaller number for more predictable testing
+        uint256 startingIndex = 1;
+        address[] memory players = new address[](additionalEntrances + 1);
+        players[0] = PLAYER; // Add the initial player
+
+        for (
+            uint256 i = startingIndex;
+            i < startingIndex + additionalEntrances;
+            i++
+        ) {
+            address newPlayer = address(uint160(i));
+            players[i] = newPlayer; // Store players for verification
+            hoax(newPlayer, 1 ether);
+            raffle.enterRaffle{value: entranceFee}();
+        }
+
+        uint256 startingTimeStamp = raffle.getLastTimeStamp();
+        uint256 prize = entranceFee * (additionalEntrances + 1);
+
+        // Record winner's starting balance before fulfillment
+        uint256 winnerStartingBalance = PLAYER.balance;
+        for (
+            uint256 i = startingIndex;
+            i < startingIndex + additionalEntrances;
+            i++
+        ) {
+            if (address(uint160(i)).balance > winnerStartingBalance) {
+                winnerStartingBalance = address(uint160(i)).balance;
+            }
+        }
+
+        // Act
+        vm.recordLogs();
+        raffle.performUpKeep("");
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 requestId = entries[1].topics[1];
+
+        VRFCoordinatorV2_5Mock(vrfCoordinator).fulfillRandomWords(
+            uint256(requestId),
+            address(raffle)
+        );
+
+        // Assert
+        address recentWinner = raffle.getRecentWinner();
+        Raffle.RaffleState raffleState = raffle.gerRaffleState();
+        uint256 endingTimeStamp = raffle.getLastTimeStamp();
+
+        console.log("Recent winner:", recentWinner);
+        console.log("Winner balance:", recentWinner.balance);
+        console.log("Expected prize:", prize);
+        console.log("Raffle state:", uint256(raffleState));
+        console.log("Starting timestamp:", startingTimeStamp);
+        console.log("Ending timestamp:", endingTimeStamp);
+
+        // Verify the winner is one of our players
+        bool isValidWinner = false;
+        for (uint256 i = 0; i < players.length; i++) {
+            if (recentWinner == players[i]) {
+                isValidWinner = true;
+                break;
+            }
+        }
+
+        // Determine winner's starting balance
+        uint256 actualWinnerStartingBalance;
+        if (recentWinner == PLAYER) {
+            actualWinnerStartingBalance = STARTING_PLAYER_BALANCE - entranceFee; // PLAYER paid entrance fee
+        } else {
+            actualWinnerStartingBalance = 1 ether - entranceFee; // Other players started with 1 ether from hoax
+        }
+
+        assert(isValidWinner); // Winner should be one of our entered players
+        assert(uint256(raffleState) == 0); // Should be back to OPEN state
+        assert(recentWinner.balance == actualWinnerStartingBalance + prize); // Winner should receive their starting balance plus the prize
+        assert(endingTimeStamp > startingTimeStamp); // Timestamp should be updated
     }
 }
